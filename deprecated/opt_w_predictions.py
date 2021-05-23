@@ -3,11 +3,6 @@ import numpy as np
 import networkx as nx
 
 
-import torch
-from torch import nn
-from torch.autograd import Variable
-from torch import optim
-import torch.nn.functional as F
 import pickle
 import sys
 import datetime
@@ -117,6 +112,30 @@ def get_regret(predictors,X_train, c_train, X_test, c_test, sp_oracle, quiet=Fal
         regrets[i] = r_star-r_pred; x_star_regr[:,i]=x_star-x_pred
     return [regrets, x_star_regr]
 
+def get_regret_instanceDict(predictors, instances, sp_oracle, quiet=False):
+    [d,n_train] = c_train.shape
+    c_pred = np.asarray([ predictors[d_].predict(X_train.T) for d_ in range(d)])
+    regrets = np.zeros(n_train);x_star_regr = np.zeros(c_pred.shape)
+    for inst in instances: 
+        if not quiet: 
+            if i%500==0: print(i)
+        #[r_star,x_star] = sp_oracle(c_train[:,i])
+        [r_pred,x_pred] = sp_oracle(c_pred[:,i])
+        regrets[i] = instance['opt_val']- instance['c'] @ x_pred; x_star_regr[:,i]=instance['opt_sol']-x_pred
+    return [regrets, x_star_regr]
+
+def get_regret2(predictors,X_train, c_train, X_test, c_test, sp_oracle, quiet=False):
+    [d,n_train] = c_train.shape
+    c_pred = np.asarray([ predictors[d_].predict(X_train.T) for d_ in range(d)])
+    regrets = np.zeros(n_train);x_star_regr = np.zeros(c_pred.shape)
+    for i in range(n_train): 
+        if not quiet: 
+            if i%500==0: print(i)
+        [r_star,x_star] = sp_oracle(c_train[:,i])
+        [r_pred,x_pred] = sp_oracle(c_pred[:,i])
+        regrets[i] = r_star-r_pred; x_star_regr[:,i]=abs(r_star-r_pred)*np.ones(x_star.shape)
+    return [regrets, x_star_regr]
+
 def eval_regr(c_hat,c_star, oracle): 
     # oracle doesn't serialize for parallelization: need to chanage 
     [r_star,x_star] = oracle(c_star)
@@ -141,113 +160,3 @@ def generate_data(n_train, n_test, n_holdout, polykernel_degree,polykernel_noise
 
 
 
-# Adapted from https://github.com/JayMan91/NeurIPSIntopt/blob/034682a818220a7a0a72d478c045fbe532428710/shortespath/shortespath.py
-class SPO:
-	def __init__(self,A,num_features, num_layers, intermediate_size,num_instance= 1,
-		activation_fn = nn.ReLU, epochs=10,optimizer=optim.Adam,
-		validation=False,**hyperparams):
-		self.A = A
-		self.num_features = num_features
-		self.num_layers = num_layers
-		self.activation_fn = activation_fn
-		self.intermediate_size = intermediate_size
-		
-		self.epochs = epochs
-		self.num_instance = num_instance
-		self.validation = validation
-		
-	
-		self.net = make_fc(num_layers=num_layers, num_features=num_features, 
-			activation_fn= activation_fn,
-			intermediate_size= intermediate_size)
-		self.optimizer = optimizer(self.net.parameters(), **hyperparams)
-		
-	def fit(self,X,y,instances):
-		#A_torch = torch.from_numpy(self.A).float()	
-		test_instances =  instances['test']
-		validation_instances =  instances['validation']
-		train_instances = instances['train']	
-		time_  = 0
-		self.model_time = 0		
-		n_train = X.shape[0]
-
-		if self.validation:
-			validation_list = []
-
-		X_torch = torch.from_numpy(X).float()
-		y_torch = torch.from_numpy(y).float()
-
-		true_solution ={}
-		logging.info("training started")
-		for e in range(self.epochs):
-			for i in range(self.num_instance):
-				start_time = time.time()
-				self.optimizer.zero_grad()
-				source, dest = train_instances[i]
-				b = np.zeros(len(self.A))
-				b[source] =1
-				b[dest ]=-1
-				if i not in true_solution:
-					model = gp.Model()
-					model.setParam('OutputFlag', 0)
-					x = model.addMVar(shape= self.A.shape[1], lb=0.0, vtype=gp.GRB.CONTINUOUS, name="x")
-					model.addConstr(self.A @ x == b, name="eq")
-					model.setObjective((y_torch.detach().numpy())@x, gp.GRB.MINIMIZE)
-					model.optimize()
-					x_true = x.X
-
-					true_solution[i] = np.copy(x_true)
-				x_true = true_solution[i]
-
-				c_pred = self.net(X_torch).squeeze()
-				c_spo = (2*c_pred - y_torch)
-				
-				model = gp.Model()
-				model.setParam('OutputFlag', 0)
-				x = model.addMVar(shape= self.A.shape[1], lb=0.0, ub=1.0,vtype=gp.GRB.CONTINUOUS, name="x")
-				model.addConstr(self.A @ x == b, name="eq")
-				model.setObjective((c_spo.detach().numpy())@x, gp.GRB.MINIMIZE)
-				model.optimize()
-				#print(model.status)
-				x_spo = x.X
-				grad = torch.from_numpy( x_true - x_spo).float()
-				loss = self.net(X_torch).squeeze()
-				loss.backward(gradient=grad)
-				self.optimizer.step()
-				logging.info("bkwd done")
-
-				end_time = time.time()
-				time_ += end_time - start_time
-				if self.validation:
-					if ((i+1)%20==0):
-						validation_list.append( validation_module(self.net,self.A, 
-					X,y,train_instances,validation_instances, 
-					test_instances,time_,e,i))
-
-			print("Epoch {} Loss:{} Time: {:%Y-%m-%d %H:%M:%S}".format(e+1,loss.sum().item(),
-				datetime.datetime.now()))
-		if self.validation :
-	
-			dd = defaultdict(list)
-			for d in validation_list:
-				for key, value in d.items():
-					dd[key].append(value)
-			df = pd.DataFrame.from_dict(dd)
-			# print(validation_module(self.net,self.A, 
-			# 			X,y,train_instances,validation_instances, 
-			# 			test_instances,time_,e,i))
-			# pred = self.predict(X)
-			# print(mse(pred,y))
-			logging.info('Completion Time %s \n' %str(datetime.datetime.now()) )
-			return df
-	def validation_result(self,X,y, instances):
-		validation_rslt = get_loss(self.net, self.A, X,y,instances)
-		return  validation_rslt[0], validation_rslt[1]
-    
-
-	def predict(self,X):
-		X_torch = torch.from_numpy(X).float()
-		self.net.eval()
-		pred= self.net(X_torch)
-		self.net.train()
-		return pred.detach().detach().numpy().squeeze()

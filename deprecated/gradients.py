@@ -9,7 +9,7 @@ def SPO_plus(instance, oracle, model):
         weights = 2*(instance['opt_sol'] - spo_opt_sol)
     return model.backward(instance['features'], weights)
 
-def decision_loss_mse(instance, oracle, model, mu = 0.5):
+def decision_loss_mse(instance, oracle, model, mu = 0.95):
     estimated_cost = model.forward(instance['features'])
     oracle.init_model(instance)
     try:
