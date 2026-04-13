@@ -193,15 +193,22 @@ python experiments/context_reweighting_experiment.py \
   --output results/context_reweighting.csv
 ```
 
-For cluster execution, the most successful early configuration was a lighter
-paper-style run with:
+For cluster execution, the main recommendation is to use `joblib` process
+workers rather than threads. The experiment runner now defaults to:
 
-- `--skip-spo`
-- a single mixture weight `0.7925`
-- `joblib` process workers instead of threads
-- moderate worker count and smaller batch size
+- `--parallel-backend processes`
 
-Example:
+Default full run:
+
+```bash
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv > results/paper_figure5_context.log 2>&1 &
+```
+
+Faster runs:
+
+```bash
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo.csv > results/paper_figure5_nospo.log 2>&1 &
+```
 
 ```bash
 nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv > results/paper_figure5_nospo_mu07925.log 2>&1 &

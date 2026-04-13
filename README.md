@@ -73,28 +73,38 @@ One-line install:
 python -m pip install numpy pandas scikit-learn joblib networkx scipy gurobipy
 ```
 
-Recommended first cluster run:
+Recommended cluster backend:
 
-```bash
-mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv > results/paper_figure5_nospo_mu07925.log 2>&1 &
-```
+-- use `--parallel-backend processes`
 
-Full paper-style Figure 5 run including `SPO`:
+Default cluster-style full Figure 5 run:
 
 ```bash
 mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv > results/paper_figure5_context.log 2>&1 &
 ```
 
+Faster no-`SPO` run:
+
+```bash
+mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo.csv > results/paper_figure5_nospo.log 2>&1 &
+```
+
+Faster no-`SPO`, single-`mu=0.7925` run:
+
+```bash
+mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv > results/paper_figure5_nospo_mu07925.log 2>&1 &
+```
+
 Resume after interruption:
 
 ```bash
-nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv >> results/paper_figure5_nospo_mu07925.log 2>&1 &
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv >> results/paper_figure5_context.log 2>&1 &
 ```
 
 Progress:
 
 ```bash
-tail -f results/paper_figure5_nospo_mu07925.log
+tail -f results/paper_figure5_context.log
 ```
 
 ### Summarizing Figure 5 style results
@@ -118,6 +128,7 @@ alongside the mean `LS` and `SPO` results.
 
 -- The run is long because `SPO` dominates runtime.
 -- On the cluster, `joblib` with `--parallel-backend processes` behaved much
-   better than `threads` for the lighter no-`SPO` run.
--- A practical first cluster target is the no-`SPO`, single-`mu=0.7925` run.
+   better than `threads`.
+-- Use the no-`SPO` and single-`mu=0.7925` commands above when you want a
+   faster turnaround run.
 -- For the full `SPO` run, use smaller batches and moderate worker counts first.

@@ -380,7 +380,7 @@ def main():
     parser.add_argument('--context-mixture-weights', type=parse_float_list, default=None)
     parser.add_argument('--n-reps', type=int, default=None)
     parser.add_argument('--n-jobs', type=int, default=-1)
-    parser.add_argument('--parallel-backend', choices=['threads', 'processes'], default='threads')
+    parser.add_argument('--parallel-backend', choices=['threads', 'processes'], default='processes')
     parser.add_argument('--batch-size', type=int, default=None)
     parser.add_argument('--verbose', type=int, default=0)
     parser.add_argument('--num-reweights', type=int, default=None)
