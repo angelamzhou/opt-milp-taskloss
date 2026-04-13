@@ -274,6 +274,12 @@ Background watcher with Slack webhook:
 SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' nohup python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json > results/paper_figure5_context_watcher.log 2>&1 &
 ```
 
+Background watcher with Slack webhook and terminal-alert mention:
+
+```bash
+SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' nohup python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json --slack-mention '<@U04FDFY1BTP>' > results/paper_figure5_context_watcher.log 2>&1 &
+```
+
 If the status heartbeat is unavailable, the watcher can still operate from a
 PID or log path:
 
@@ -289,6 +295,10 @@ In log-only mode, the watcher parses the experiment's standard progress lines:
 
 So it can still distinguish `running`, `completed`, and obvious failure cases
 even when the heartbeat file is stale or missing.
+
+The `--slack-mention` argument is only prepended on terminal alerts such as
+`completed`, `failed`, or `missing_process`, so routine progress messages do
+not ping the user.
 
 One operational note from cluster runs: when the diagnostics sweep was launched
 with a much larger process pool, `joblib` occasionally raised

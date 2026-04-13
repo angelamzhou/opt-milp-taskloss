@@ -153,6 +153,12 @@ Background watcher with Slack webhook:
 SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' nohup python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json > results/paper_figure5_context_watcher.log 2>&1 &
 ```
 
+Background watcher with Slack webhook and terminal-alert mention:
+
+```bash
+SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' nohup python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json --slack-mention '<@U04FDFY1BTP>' > results/paper_figure5_context_watcher.log 2>&1 &
+```
+
 The watcher can also fall back to a PID or log path if needed:
 
 ```bash
@@ -162,6 +168,9 @@ python scripts/watch_experiment_status.py --pid 12345 --log-path results/paper_f
 In `--log-path` mode, the watcher now parses the experiment's progress lines
 directly, so it can still report `running` or `completed` even when the status
 heartbeat is stale or unavailable.
+
+The `--slack-mention` argument only prefixes terminal alerts such as
+completion or failure. Progress updates remain untagged.
 
 ### Summarizing Figure 5 style results
 
