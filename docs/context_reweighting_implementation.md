@@ -256,10 +256,22 @@ Typical usage:
 python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json
 ```
 
+Background watcher:
+
+```bash
+nohup python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json > results/paper_figure5_context_watcher.log 2>&1 &
+```
+
 With Slack webhook alerts:
 
 ```bash
 SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json
+```
+
+Background watcher with Slack webhook:
+
+```bash
+SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' nohup python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json > results/paper_figure5_context_watcher.log 2>&1 &
 ```
 
 If the status heartbeat is unavailable, the watcher can still operate from a
@@ -268,6 +280,15 @@ PID or log path:
 ```bash
 python scripts/watch_experiment_status.py --pid 12345 --log-path results/paper_figure5_context.log
 ```
+
+In log-only mode, the watcher parses the experiment's standard progress lines:
+
+- `[%..] completed X/Y tasks ...`
+- final `wrote ...csv` lines
+- failure signatures such as `TerminatedWorkerError`
+
+So it can still distinguish `running`, `completed`, and obvious failure cases
+even when the heartbeat file is stale or missing.
 
 One operational note from cluster runs: when the diagnostics sweep was launched
 with a much larger process pool, `joblib` occasionally raised

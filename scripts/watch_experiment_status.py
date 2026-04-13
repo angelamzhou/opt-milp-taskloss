@@ -2,7 +2,7 @@ import argparse
 import json
 import os
 from pathlib import Path
-import signal
+import re
 import socket
 import sys
 import time
@@ -15,6 +15,12 @@ FAILURE_PATTERNS = [
     'Out Of Memory',
     'Traceback (most recent call last):',
 ]
+
+PROGRESS_RE = re.compile(
+    r'\[\s*(?P<pct>\d+(?:\.\d+)?)%\]\s+completed\s+'
+    r'(?P<completed>\d+)/(?P<total>\d+)\s+tasks\s+\|\s+elapsed\s+'
+    r'(?P<elapsed>.*?)\s+\|\s+eta\s+(?P<eta>.*?)\s+\|\s+last task\s+(?P<last_task>\S+)'
+)
 
 
 def now_string():
@@ -63,10 +69,51 @@ def detect_log_failure(log_text):
     return None
 
 
-def summarize_snapshot(args, status_payload, pid_alive, log_failure):
+def parse_log_progress(log_text):
+    latest = None
+    lines = log_text.splitlines()
+    for line in lines:
+        match = PROGRESS_RE.search(line)
+        if match:
+            latest = {
+                'percent_complete': float(match.group('pct')),
+                'completed_tasks': int(match.group('completed')),
+                'total_tasks': int(match.group('total')),
+                'last_task_id': match.group('last_task'),
+                'elapsed': match.group('elapsed'),
+                'eta': match.group('eta'),
+            }
+    return latest
+
+
+def detect_log_completion(log_text):
+    lines = log_text.splitlines()
+    return any(line.startswith('wrote ') for line in lines)
+
+
+def summarize_snapshot(args, status_payload, pid_alive, log_failure, log_progress=None,
+                       log_completed=False, log_path_exists=False):
     if status_payload is None:
-        state = 'missing'
-        message = 'status file missing'
+        if log_failure:
+            state = 'failed'
+            message = 'log failure detected'
+        elif log_completed:
+            state = 'completed'
+            message = 'completed from log'
+        elif log_progress is not None:
+            state = 'running'
+            message = 'running | %s/%s tasks | %.2f%% | last=%s' % (
+                log_progress['completed_tasks'],
+                log_progress['total_tasks'],
+                log_progress['percent_complete'],
+                log_progress['last_task_id'],
+            )
+        elif log_path_exists:
+            state = 'unknown'
+            message = 'log present but no progress line found'
+        else:
+            state = 'missing'
+            message = 'status file missing'
     else:
         state = status_payload.get('status', 'unknown')
         completed = status_payload.get('completed_tasks')
@@ -81,7 +128,7 @@ def summarize_snapshot(args, status_payload, pid_alive, log_failure):
         if last_task:
             message += ' | last=%s' % last_task
 
-    if log_failure:
+    if log_failure and status_payload is not None:
         state = 'failed'
         message += ' | log_pattern=%s' % log_failure
     elif status_payload and state == 'running' and not pid_alive and args.pid is not None:
@@ -145,15 +192,31 @@ def poll_snapshot(args):
     if log_path is None and status_payload and status_payload.get('log_path'):
         log_path = Path(status_payload['log_path'])
     log_text = tail_text(log_path, max_bytes=args.log_tail_bytes)
+    log_path_exists = bool(log_path and log_path.exists())
     log_failure = detect_log_failure(log_text)
-    summary = summarize_snapshot(args, status_payload, pid_alive, log_failure)
-    percent_complete = None if status_payload is None else status_payload.get('percent_complete')
+    log_progress = parse_log_progress(log_text)
+    log_completed = detect_log_completion(log_text)
+    summary = summarize_snapshot(
+        args,
+        status_payload,
+        pid_alive,
+        log_failure,
+        log_progress=log_progress,
+        log_completed=log_completed,
+        log_path_exists=log_path_exists,
+    )
+    if status_payload is None and log_progress is not None:
+        percent_complete = log_progress.get('percent_complete')
+    else:
+        percent_complete = None if status_payload is None else status_payload.get('percent_complete')
     return {
         'summary': summary,
         'status_payload': status_payload,
         'pid_alive': pid_alive,
         'log_failure': log_failure,
         'percent_complete': percent_complete,
+        'log_progress': log_progress,
+        'log_completed': log_completed,
     }
 
 
