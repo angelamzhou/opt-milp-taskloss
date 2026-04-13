@@ -1,6 +1,9 @@
 import argparse
 import math
+import os
 from pathlib import Path
+import shlex
+import socket
 import sys
 import time
 
@@ -226,6 +229,67 @@ def clean_and_resume_output(output_path, expected_row_count):
     return complete_ids
 
 
+def infer_log_path(args, output_path):
+    if args.run_log_path:
+        return Path(args.run_log_path)
+    return output_path.with_suffix('.log')
+
+
+def infer_run_history_path(args, output_path):
+    if args.run_history_path:
+        return Path(args.run_history_path)
+    return output_path.parent / 'run_history.md'
+
+
+def format_markdown_cell(value):
+    if value is None:
+        return ''
+    return str(value).replace('\n', ' ').replace('|', '\\|')
+
+
+def reconstruct_launch_command():
+    argv = ['python'] + sys.argv
+    return shlex.join(argv)
+
+
+def append_run_history(run_history_path, args, output_path, log_path, total_tasks,
+                       completed_tasks, pending_tasks):
+    run_history_path.parent.mkdir(parents=True, exist_ok=True)
+    if args.overwrite:
+        mode = 'overwrite'
+    elif completed_tasks > 0:
+        mode = 'resume'
+    else:
+        mode = 'fresh'
+
+    launch_command = args.launch_command or reconstruct_launch_command()
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    host = socket.gethostname()
+    pid = os.getpid()
+
+    if not run_history_path.exists():
+        run_history_path.write_text(
+            '| timestamp | host | pid | mode | preset | output_csv | log_file | completed | remaining | total | command |\n'
+            '| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n'
+        )
+
+    row = '| %s | %s | %s | %s | %s | %s | %s | %s | %s | %s | `%s` |\n' % (
+        format_markdown_cell(timestamp),
+        format_markdown_cell(host),
+        format_markdown_cell(pid),
+        format_markdown_cell(mode),
+        format_markdown_cell(args.preset),
+        format_markdown_cell(output_path),
+        format_markdown_cell(log_path),
+        format_markdown_cell(completed_tasks),
+        format_markdown_cell(len(pending_tasks)),
+        format_markdown_cell(total_tasks),
+        format_markdown_cell(launch_command),
+    )
+    with run_history_path.open('a') as handle:
+        handle.write(row)
+
+
 def build_tasks(args):
     tasks = []
     for degree in args.degrees:
@@ -315,6 +379,17 @@ def run_experiment(args):
 
     total_tasks = len(all_tasks)
     completed_tasks = len(completed_task_ids)
+    log_path = infer_log_path(args, output_path)
+    run_history_path = infer_run_history_path(args, output_path)
+    append_run_history(
+        run_history_path,
+        args,
+        output_path,
+        log_path,
+        total_tasks,
+        completed_tasks,
+        pending_tasks,
+    )
     print(
         'starting %d total tasks, %d already complete, %d remaining' % (
             total_tasks, completed_tasks, len(pending_tasks)
@@ -410,6 +485,9 @@ def main():
     parser.add_argument('--use-preset-skip-spo', action='store_true')
     parser.add_argument('--skip-spo', action='store_true')
     parser.add_argument('--overwrite', action='store_true')
+    parser.add_argument('--run-log-path', default=None)
+    parser.add_argument('--run-history-path', default=None)
+    parser.add_argument('--launch-command', default=None)
     parser.add_argument('--output', default='results/context_reweighting.csv')
     args = parser.parse_args()
     args = apply_preset(args)
