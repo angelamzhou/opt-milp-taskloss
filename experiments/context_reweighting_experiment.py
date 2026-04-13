@@ -1,4 +1,5 @@
 import argparse
+import json
 import math
 import os
 from pathlib import Path
@@ -6,6 +7,7 @@ import shlex
 import socket
 import sys
 import time
+import traceback
 
 import numpy as np
 import pandas as pd
@@ -241,6 +243,12 @@ def infer_run_history_path(args, output_path):
     return output_path.parent / 'run_history.md'
 
 
+def infer_status_path(args, output_path):
+    if args.status_path:
+        return Path(args.status_path)
+    return output_path.with_suffix('.status.json')
+
+
 def format_markdown_cell(value):
     if value is None:
         return ''
@@ -250,6 +258,35 @@ def format_markdown_cell(value):
 def reconstruct_launch_command():
     argv = ['python'] + sys.argv
     return shlex.join(argv)
+
+
+def atomic_write_json(path, payload):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_suffix(path.suffix + '.tmp')
+    temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + '\n')
+    temp_path.replace(path)
+
+
+def base_status_payload(args, output_path, log_path, run_history_path, status_path):
+    return {
+        'preset': args.preset,
+        'pid': os.getpid(),
+        'hostname': socket.gethostname(),
+        'output_csv': str(output_path),
+        'log_path': str(log_path),
+        'run_history_path': str(run_history_path),
+        'status_path': str(status_path),
+        'command': args.launch_command or reconstruct_launch_command(),
+        'started_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+    }
+
+
+def write_status(status_path, payload, **updates):
+    next_payload = dict(payload)
+    next_payload.update(updates)
+    next_payload['last_update'] = time.strftime('%Y-%m-%d %H:%M:%S')
+    atomic_write_json(status_path, next_payload)
+    return next_payload
 
 
 def append_run_history(run_history_path, args, output_path, log_path, total_tasks,
@@ -381,6 +418,8 @@ def run_experiment(args):
     completed_tasks = len(completed_task_ids)
     log_path = infer_log_path(args, output_path)
     run_history_path = infer_run_history_path(args, output_path)
+    status_path = infer_status_path(args, output_path)
+    status_payload = base_status_payload(args, output_path, log_path, run_history_path, status_path)
     append_run_history(
         run_history_path,
         args,
@@ -390,70 +429,148 @@ def run_experiment(args):
         completed_tasks,
         pending_tasks,
     )
-    print(
-        'starting %d total tasks, %d already complete, %d remaining' % (
-            total_tasks, completed_tasks, len(pending_tasks)
-        ),
-        flush=True,
+    status_payload = write_status(
+        status_path,
+        status_payload,
+        status='running',
+        phase='startup',
+        completed_tasks=completed_tasks,
+        remaining_tasks=len(pending_tasks),
+        total_tasks=total_tasks,
+        percent_complete=(100.0 * completed_tasks / total_tasks) if total_tasks else 100.0,
+        last_task_id=None,
+        eta_seconds=None,
     )
 
-    if not pending_tasks:
-        return pd.read_csv(output_path) if output_path.exists() else pd.DataFrame(columns=RESULT_COLUMNS)
-
-    if args.batch_size is None:
-        if args.n_jobs == -1:
-            batch_size = max(1, math.ceil(len(pending_tasks) / max(1, min(8, len(pending_tasks)))))
-        else:
-            batch_size = max(1, args.n_jobs)
-    else:
-        batch_size = max(1, args.batch_size)
-
-    start_time = time.time()
-    for batch_start in range(0, len(pending_tasks), batch_size):
-        batch = pending_tasks[batch_start:batch_start + batch_size]
-        batch_results = Parallel(
-            n_jobs=args.n_jobs,
-            verbose=args.verbose,
-            prefer=args.parallel_backend,
-        )(
-            delayed(run_single_task)(
-                task,
-                args,
-                graph_params,
-                b_true,
-                X_test_cache,
-                c_test_cache,
-                test_dict_cache,
-                regressor,
-                weight_regressor,
-                weight_param_grid,
-            )
-            for task in batch
+    try:
+        print(
+            'starting %d total tasks, %d already complete, %d remaining' % (
+                total_tasks, completed_tasks, len(pending_tasks)
+            ),
+            flush=True,
         )
 
-        for task, rows in zip(batch, batch_results):
-            annotated_rows = annotate_rows(rows, task['task_id'], args.preset, task['replication'])
-            append_rows(output_path, annotated_rows)
-            completed_tasks += 1
+        if not pending_tasks:
+            status_payload = write_status(
+                status_path,
+                status_payload,
+                status='completed',
+                phase='finished',
+                completed_tasks=completed_tasks,
+                remaining_tasks=0,
+                total_tasks=total_tasks,
+                percent_complete=100.0,
+                last_task_id=None,
+                eta_seconds=0,
+            )
+            return pd.read_csv(output_path) if output_path.exists() else pd.DataFrame(columns=RESULT_COLUMNS)
 
-            elapsed = time.time() - start_time
-            rate = elapsed / max(1, completed_tasks - len(completed_task_ids))
-            remaining = total_tasks - completed_tasks
-            eta_seconds = rate * remaining
-            pct = 100.0 * completed_tasks / total_tasks
-            print(
-                '[%6.2f%%] completed %d/%d tasks | elapsed %s | eta %s | last task %s' % (
-                    pct,
-                    completed_tasks,
-                    total_tasks,
-                    format_seconds(elapsed),
-                    format_seconds(eta_seconds),
-                    task['task_id'],
-                ),
-                flush=True,
+        if args.batch_size is None:
+            if args.n_jobs == -1:
+                batch_size = max(1, math.ceil(len(pending_tasks) / max(1, min(8, len(pending_tasks)))))
+            else:
+                batch_size = max(1, args.n_jobs)
+        else:
+            batch_size = max(1, args.batch_size)
+
+        start_time = time.time()
+        for batch_start in range(0, len(pending_tasks), batch_size):
+            batch = pending_tasks[batch_start:batch_start + batch_size]
+            batch_results = Parallel(
+                n_jobs=args.n_jobs,
+                verbose=args.verbose,
+                prefer=args.parallel_backend,
+            )(
+                delayed(run_single_task)(
+                    task,
+                    args,
+                    graph_params,
+                    b_true,
+                    X_test_cache,
+                    c_test_cache,
+                    test_dict_cache,
+                    regressor,
+                    weight_regressor,
+                    weight_param_grid,
+                )
+                for task in batch
             )
 
-    return pd.read_csv(output_path)
+            for task, rows in zip(batch, batch_results):
+                annotated_rows = annotate_rows(rows, task['task_id'], args.preset, task['replication'])
+                append_rows(output_path, annotated_rows)
+                completed_tasks += 1
+
+                elapsed = time.time() - start_time
+                rate = elapsed / max(1, completed_tasks - len(completed_task_ids))
+                remaining = total_tasks - completed_tasks
+                eta_seconds = rate * remaining
+                pct = 100.0 * completed_tasks / total_tasks
+                print(
+                    '[%6.2f%%] completed %d/%d tasks | elapsed %s | eta %s | last task %s' % (
+                        pct,
+                        completed_tasks,
+                        total_tasks,
+                        format_seconds(elapsed),
+                        format_seconds(eta_seconds),
+                        task['task_id'],
+                    ),
+                    flush=True,
+                )
+                status_payload = write_status(
+                    status_path,
+                    status_payload,
+                    status='running',
+                    phase='progress',
+                    completed_tasks=completed_tasks,
+                    remaining_tasks=remaining,
+                    total_tasks=total_tasks,
+                    percent_complete=pct,
+                    last_task_id=task['task_id'],
+                    eta_seconds=int(eta_seconds),
+                )
+
+        status_payload = write_status(
+            status_path,
+            status_payload,
+            status='completed',
+            phase='finished',
+            completed_tasks=completed_tasks,
+            remaining_tasks=0,
+            total_tasks=total_tasks,
+            percent_complete=100.0,
+            eta_seconds=0,
+        )
+        return pd.read_csv(output_path)
+    except KeyboardInterrupt:
+        write_status(
+            status_path,
+            status_payload,
+            status='interrupted',
+            phase='failed',
+            completed_tasks=completed_tasks,
+            remaining_tasks=max(0, total_tasks - completed_tasks),
+            total_tasks=total_tasks,
+            percent_complete=(100.0 * completed_tasks / total_tasks) if total_tasks else 0.0,
+            error_type='KeyboardInterrupt',
+            error_message='Run interrupted by user',
+        )
+        raise
+    except Exception as exc:
+        write_status(
+            status_path,
+            status_payload,
+            status='failed',
+            phase='failed',
+            completed_tasks=completed_tasks,
+            remaining_tasks=max(0, total_tasks - completed_tasks),
+            total_tasks=total_tasks,
+            percent_complete=(100.0 * completed_tasks / total_tasks) if total_tasks else 0.0,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            traceback=traceback.format_exc(),
+        )
+        raise
 
 
 def main():
@@ -487,6 +604,7 @@ def main():
     parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--run-log-path', default=None)
     parser.add_argument('--run-history-path', default=None)
+    parser.add_argument('--status-path', default=None)
     parser.add_argument('--launch-command', default=None)
     parser.add_argument('--output', default='results/context_reweighting.csv')
     args = parser.parse_args()

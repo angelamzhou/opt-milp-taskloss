@@ -113,6 +113,12 @@ Progress:
 tail -f results/paper_figure5_context.log
 ```
 
+Status heartbeat:
+
+```bash
+cat results/paper_figure5_context.status.json
+```
+
 Run registry:
 
 ```bash
@@ -122,6 +128,24 @@ tail -n 20 results/run_history.md
 Each invocation appends one row with the timestamp, preset, output CSV, log
 file, and reconstructed Python command. You do not need to pass
 `--launch-command` for normal use.
+
+Watcher:
+
+```bash
+python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json
+```
+
+Watcher with Slack webhook:
+
+```bash
+SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json
+```
+
+The watcher can also fall back to a PID or log path if needed:
+
+```bash
+python scripts/watch_experiment_status.py --pid 12345 --log-path results/paper_figure5_context.log
+```
 
 ### Summarizing Figure 5 style results
 

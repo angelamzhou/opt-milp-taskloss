@@ -229,6 +229,46 @@ Every invocation appends a row to `results/run_history.md` with:
 For normal usage, the command is rebuilt automatically from `sys.argv`, so the
 examples do not need `--launch-command`.
 
+The runner now also writes a machine-readable heartbeat file, by default:
+
+- `results/<run_name>.status.json`
+
+That file records:
+
+- host
+- pid
+- command
+- output CSV
+- log path
+- completed, remaining, and total tasks
+- percent complete
+- ETA in seconds
+- last completed task
+- terminal status on success or failure
+
+The companion watcher script is:
+
+- `scripts/watch_experiment_status.py`
+
+Typical usage:
+
+```bash
+python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json
+```
+
+With Slack webhook alerts:
+
+```bash
+SLACK_WEBHOOK_URL='https://hooks.slack.com/services/...' python scripts/watch_experiment_status.py --status-path results/paper_figure5_context.status.json
+```
+
+If the status heartbeat is unavailable, the watcher can still operate from a
+PID or log path:
+
+```bash
+python scripts/watch_experiment_status.py --pid 12345 --log-path results/paper_figure5_context.log
+```
+
 One operational note from cluster runs: when the diagnostics sweep was launched
 with a much larger process pool, `joblib` occasionally raised
 `TerminatedWorkerError` with worker exit code `SIGKILL(-9)`. The most likely
