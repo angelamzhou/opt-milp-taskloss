@@ -1,6 +1,8 @@
 import argparse
+import math
 from pathlib import Path
 import sys
+import time
 
 import numpy as np
 import pandas as pd
@@ -19,6 +21,24 @@ from reweighted_mse_helpers import (
     generateInstanceDict,
     run_replication_over_weights,
 )
+
+
+RESULT_COLUMNS = [
+    'task_id',
+    'preset',
+    'replication',
+    'n_train',
+    'polykernel_degree',
+    'n_test',
+    'time',
+    'algo',
+    'tr_regret',
+    'tst_regret',
+    'reweight',
+    'mixture_weight',
+    'avg_raw_weight',
+    'avg_fitted_weight',
+]
 
 
 DEFAULTS = {
@@ -128,8 +148,127 @@ def apply_preset(args):
     return args
 
 
+def expected_rows_per_task(args):
+    rows = 1
+    rows += len(args.mixture_weights) * args.num_reweights
+    rows += len(args.context_mixture_weights or [])
+    rows += 0 if args.skip_spo else 1
+    return rows
+
+
+def format_seconds(seconds):
+    seconds = max(0, int(seconds))
+    hours, remainder = divmod(seconds, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if hours:
+        return '%dh%02dm%02ds' % (hours, minutes, secs)
+    if minutes:
+        return '%dm%02ds' % (minutes, secs)
+    return '%ds' % secs
+
+
+def task_id_for(degree, n_train, replication):
+    return 'deg%s_n%s_rep%s' % (degree, n_train, replication)
+
+
+def annotate_rows(rows, task_id, preset, replication):
+    annotated = []
+    for row in rows:
+        row_copy = dict(row)
+        row_copy['task_id'] = task_id
+        row_copy['preset'] = preset
+        row_copy['replication'] = replication
+        annotated.append(row_copy)
+    return annotated
+
+
+def append_rows(output_path, rows):
+    frame = pd.DataFrame.from_records(rows)
+    for column in RESULT_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = np.nan
+    frame = frame[RESULT_COLUMNS]
+    header = not output_path.exists()
+    frame.to_csv(output_path, mode='a', header=header, index=False)
+
+
+def clean_and_resume_output(output_path, expected_row_count):
+    if not output_path.exists():
+        return set()
+
+    existing = pd.read_csv(output_path)
+    if existing.empty:
+        output_path.unlink()
+        return set()
+    if 'task_id' not in existing.columns:
+        raise ValueError('existing output file is not resumable because it lacks a task_id column')
+
+    counts = existing.groupby('task_id').size()
+    complete_ids = set(counts[counts == expected_row_count].index.tolist())
+    keep_mask = existing['task_id'].isin(complete_ids)
+    if not keep_mask.all():
+        cleaned = existing.loc[keep_mask].copy()
+        if cleaned.empty:
+            output_path.unlink()
+        else:
+            cleaned.to_csv(output_path, index=False)
+    return complete_ids
+
+
+def build_tasks(args):
+    tasks = []
+    for degree in args.degrees:
+        for n_train in args.n_train_values:
+            for replication in range(args.n_reps):
+                tasks.append({
+                    'degree': degree,
+                    'n_train': n_train,
+                    'replication': replication,
+                    'task_id': task_id_for(degree, n_train, replication),
+                })
+    return tasks
+
+
+def run_single_task(task, args, graph_params, b_true, X_test_cache, c_test_cache,
+                    test_dict_cache, regressor, weight_regressor, weight_param_grid):
+    degree = task['degree']
+    n_train = task['n_train']
+    data_params = [
+        n_train,
+        args.n_test,
+        args.n_holdout,
+        degree,
+        args.polykernel_noise_half_width,
+        b_true
+    ]
+    return run_replication_over_weights(
+        data_params,
+        X_test_cache[degree],
+        c_test_cache[degree],
+        test_dict_cache[degree],
+        args.mixture_weights,
+        regressor,
+        graph_params,
+        num_reweights=args.num_reweights,
+        random_regr=False,
+        context_mixture_weights=args.context_mixture_weights,
+        weight_regressor=weight_regressor,
+        weight_param_grid=weight_param_grid,
+        context_n_folds=args.context_folds,
+        context_weight_cv=args.context_weight_cv,
+        context_cap_quantile=args.context_cap_quantile,
+        context_max_weight=args.context_max_weight,
+        run_spo=not args.skip_spo
+    )
+
+
 def run_experiment(args):
     np.random.seed(args.seed)
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if args.overwrite and output_path.exists():
+        output_path.unlink()
 
     graph_params = build_graph_params(args.grid_dim)
     oracle = ShortestPathOracle(graph_params)
@@ -139,50 +278,94 @@ def run_experiment(args):
     regressor = LinearRegression
     weight_regressor, weight_param_grid = get_weight_model(args.weight_model)
 
-    results = []
-    context_mixture_weights = args.context_mixture_weights or args.mixture_weights
-
+    X_test_cache = {}
+    c_test_cache = {}
+    test_dict_cache = {}
     for degree in args.degrees:
         [X_train, c_train, X_validation, c_validation, X_test, c_test] = generate_data(
-            max(args.n_train_values), args.n_test, args.n_holdout, degree,
-            args.polykernel_noise_half_width, b_true, gen_test=True
+            max(args.n_train_values),
+            args.n_test,
+            args.n_holdout,
+            degree,
+            args.polykernel_noise_half_width,
+            b_true,
+            gen_test=True
         )
-        testDict = generateInstanceDict(X_test, c_test, oracle)
+        X_test_cache[degree] = X_test
+        c_test_cache[degree] = c_test
+        test_dict_cache[degree] = generateInstanceDict(X_test, c_test, oracle)
 
-        for n_train in args.n_train_values:
-            data_params = [
-                n_train,
-                args.n_test,
-                args.n_holdout,
-                degree,
-                args.polykernel_noise_half_width,
-                b_true
-            ]
-            replications = Parallel(n_jobs=args.n_jobs, verbose=args.verbose)(
-                delayed(run_replication_over_weights)(
-                    data_params,
-                    X_test,
-                    c_test,
-                    testDict,
-                    args.mixture_weights,
-                    regressor,
-                    graph_params,
-                    num_reweights=args.num_reweights,
-                    random_regr=False,
-                    context_mixture_weights=context_mixture_weights,
-                    weight_regressor=weight_regressor,
-                    weight_param_grid=weight_param_grid,
-                    context_n_folds=args.context_folds,
-                    context_weight_cv=args.context_weight_cv,
-                    context_cap_quantile=args.context_cap_quantile,
-                    context_max_weight=args.context_max_weight,
-                    run_spo=not args.skip_spo
-                )
-                for _ in range(args.n_reps)
+    all_tasks = build_tasks(args)
+    expected_row_count = expected_rows_per_task(args)
+    completed_task_ids = clean_and_resume_output(output_path, expected_row_count)
+    pending_tasks = [task for task in all_tasks if task['task_id'] not in completed_task_ids]
+
+    total_tasks = len(all_tasks)
+    completed_tasks = len(completed_task_ids)
+    print(
+        'starting %d total tasks, %d already complete, %d remaining' % (
+            total_tasks, completed_tasks, len(pending_tasks)
+        ),
+        flush=True,
+    )
+
+    if not pending_tasks:
+        return pd.read_csv(output_path) if output_path.exists() else pd.DataFrame(columns=RESULT_COLUMNS)
+
+    if args.batch_size is None:
+        if args.n_jobs == -1:
+            batch_size = max(1, math.ceil(len(pending_tasks) / max(1, min(8, len(pending_tasks)))))
+        else:
+            batch_size = max(1, args.n_jobs)
+    else:
+        batch_size = max(1, args.batch_size)
+
+    start_time = time.time()
+    for batch_start in range(0, len(pending_tasks), batch_size):
+        batch = pending_tasks[batch_start:batch_start + batch_size]
+        batch_results = Parallel(
+            n_jobs=args.n_jobs,
+            verbose=args.verbose,
+            prefer=args.parallel_backend,
+        )(
+            delayed(run_single_task)(
+                task,
+                args,
+                graph_params,
+                b_true,
+                X_test_cache,
+                c_test_cache,
+                test_dict_cache,
+                regressor,
+                weight_regressor,
+                weight_param_grid,
             )
-            results.extend(np.array(replications, dtype=object).flatten())
+            for task in batch
+        )
 
-    return pd.DataFrame.from_records(results)
+        for task, rows in zip(batch, batch_results):
+            annotated_rows = annotate_rows(rows, task['task_id'], args.preset, task['replication'])
+            append_rows(output_path, annotated_rows)
+            completed_tasks += 1
+
+            elapsed = time.time() - start_time
+            rate = elapsed / max(1, completed_tasks - len(completed_task_ids))
+            remaining = total_tasks - completed_tasks
+            eta_seconds = rate * remaining
+            pct = 100.0 * completed_tasks / total_tasks
+            print(
+                '[%6.2f%%] completed %d/%d tasks | elapsed %s | eta %s | last task %s' % (
+                    pct,
+                    completed_tasks,
+                    total_tasks,
+                    format_seconds(elapsed),
+                    format_seconds(eta_seconds),
+                    task['task_id'],
+                ),
+                flush=True,
+            )
+
+    return pd.read_csv(output_path)
 
 
 def main():
@@ -197,7 +380,9 @@ def main():
     parser.add_argument('--context-mixture-weights', type=parse_float_list, default=None)
     parser.add_argument('--n-reps', type=int, default=None)
     parser.add_argument('--n-jobs', type=int, default=-1)
-    parser.add_argument('--verbose', type=int, default=20)
+    parser.add_argument('--parallel-backend', choices=['threads', 'processes'], default='threads')
+    parser.add_argument('--batch-size', type=int, default=None)
+    parser.add_argument('--verbose', type=int, default=0)
     parser.add_argument('--num-reweights', type=int, default=None)
     parser.add_argument('--n-test', type=int, default=None)
     parser.add_argument('--n-holdout', type=int, default=None)
@@ -209,16 +394,13 @@ def main():
     parser.add_argument('--context-max-weight', type=float, default=1.0)
     parser.add_argument('--use-preset-skip-spo', action='store_true')
     parser.add_argument('--skip-spo', action='store_true')
+    parser.add_argument('--overwrite', action='store_true')
     parser.add_argument('--output', default='results/context_reweighting.csv')
     args = parser.parse_args()
     args = apply_preset(args)
 
     results_df = run_experiment(args)
-
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    results_df.to_csv(output_path, index=False)
-    print('wrote', output_path)
+    print('wrote', args.output)
     print(results_df.groupby('algo')['tst_regret'].mean())
 
 
