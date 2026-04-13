@@ -201,18 +201,33 @@ workers rather than threads. The experiment runner now defaults to:
 Default full run:
 
 ```bash
-nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv > results/paper_figure5_context.log 2>&1 &
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv --run-log-path results/paper_figure5_context.log > results/paper_figure5_context.log 2>&1 &
 ```
 
 Faster runs:
 
 ```bash
-nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo.csv > results/paper_figure5_nospo.log 2>&1 &
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo.csv --run-log-path results/paper_figure5_nospo.log > results/paper_figure5_nospo.log 2>&1 &
 ```
 
 ```bash
-nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv > results/paper_figure5_nospo_mu07925.log 2>&1 &
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv --run-log-path results/paper_figure5_nospo_mu07925.log > results/paper_figure5_nospo_mu07925.log 2>&1 &
 ```
+
+```bash
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --compute-mu-diagnostics --diagnostic-cv-folds 5 --parallel-backend processes --n-jobs 16 --batch-size 8 --verbose 0 --output results/paper_figure5_mu_diagnostics.csv --run-log-path results/paper_figure5_mu_diagnostics.log > results/paper_figure5_mu_diagnostics.log 2>&1 &
+```
+
+Every invocation appends a row to `results/run_history.md` with:
+
+- timestamp
+- preset
+- output CSV
+- external log path
+- reconstructed Python command
+
+For normal usage, the command is rebuilt automatically from `sys.argv`, so the
+examples do not need `--launch-command`.
 
 For a small non-linear weight regressor with explicit tuning:
 

@@ -80,25 +80,31 @@ Recommended cluster backend:
 Default cluster-style full Figure 5 run:
 
 ```bash
-mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv > results/paper_figure5_context.log 2>&1 &
+mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv --run-log-path results/paper_figure5_context.log > results/paper_figure5_context.log 2>&1 &
 ```
 
 Faster no-`SPO` run:
 
 ```bash
-mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo.csv > results/paper_figure5_nospo.log 2>&1 &
+mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo.csv --run-log-path results/paper_figure5_nospo.log > results/paper_figure5_nospo.log 2>&1 &
 ```
 
 Faster no-`SPO`, single-`mu=0.7925` run:
 
 ```bash
-mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv > results/paper_figure5_nospo_mu07925.log 2>&1 &
+mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv --run-log-path results/paper_figure5_nospo_mu07925.log > results/paper_figure5_nospo_mu07925.log 2>&1 &
+```
+
+Mu-selection diagnostics run:
+
+```bash
+mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --compute-mu-diagnostics --diagnostic-cv-folds 5 --parallel-backend processes --n-jobs 16 --batch-size 8 --verbose 0 --output results/paper_figure5_mu_diagnostics.csv --run-log-path results/paper_figure5_mu_diagnostics.log > results/paper_figure5_mu_diagnostics.log 2>&1 &
 ```
 
 Resume after interruption:
 
 ```bash
-nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv >> results/paper_figure5_context.log 2>&1 &
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv --run-log-path results/paper_figure5_context.log >> results/paper_figure5_context.log 2>&1 &
 ```
 
 Progress:
@@ -106,6 +112,16 @@ Progress:
 ```bash
 tail -f results/paper_figure5_context.log
 ```
+
+Run registry:
+
+```bash
+tail -n 20 results/run_history.md
+```
+
+Each invocation appends one row with the timestamp, preset, output CSV, log
+file, and reconstructed Python command. You do not need to pass
+`--launch-command` for normal use.
 
 ### Summarizing Figure 5 style results
 
