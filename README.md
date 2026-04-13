@@ -35,3 +35,5 @@ Useful presets:
    `deprecated/res/linear_regression_-res.p`
 -- `--preset may19` reproduces the newer notebook sweep behind the `may19`
    result CSVs
+-- `--preset paper-figure5` reconstructs the paper's `SPO` comparison setting
+   described around Figure 5

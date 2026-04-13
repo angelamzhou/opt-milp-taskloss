@@ -58,6 +58,16 @@ PRESETS = {
         'num_reweights': 1,
         'skip_spo': True,
     },
+    'paper-figure5': {
+        'n_train_values': [100, 1000, 2000],
+        'degrees': [1, 2, 4, 6, 8],
+        'mixture_weights': [0.2, 0.3975, 0.595, 0.7925, 0.99],
+        'n_reps': 50,
+        'n_test': 10000,
+        'n_holdout': 1000,
+        'num_reweights': 1,
+        'skip_spo': False,
+    },
 }
 
 

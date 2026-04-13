@@ -151,6 +151,7 @@ present in the repository:
 
 - `--preset deprecated-paper`
 - `--preset may19`
+- `--preset paper-figure5`
 
 ## Why This Is Minimal
 
