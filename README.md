@@ -28,3 +28,10 @@ The new context-only method uses:
 
 By default the weight regression uses `RidgeCV`, so the weight model is tuned
 inside the cross-fitting step with a small sklearn-native regularization sweep.
+
+Useful presets:
+
+-- `--preset deprecated-paper` reproduces the older shortest-path grid saved in
+   `deprecated/res/linear_regression_-res.p`
+-- `--preset may19` reproduces the newer notebook sweep behind the `may19`
+   result CSVs

@@ -21,6 +21,46 @@ from reweighted_mse_helpers import (
 )
 
 
+DEFAULTS = {
+    'n_train_values': [100, 1000, 2000],
+    'degrees': [1, 2, 4, 6, 8],
+    'mixture_weights': [0.2, 0.4, 0.6, 0.8],
+    'n_reps': 8,
+    'n_test': 10000,
+    'n_holdout': 500,
+    'num_reweights': 3,
+    'skip_spo': False,
+}
+
+
+PRESETS = {
+    'custom': {},
+    'current': {
+        **DEFAULTS,
+    },
+    'may19': {
+        'n_train_values': [100, 1000, 2000],
+        'degrees': [1, 2, 4, 6, 8],
+        'mixture_weights': [0.2, 0.4, 0.6, 0.8],
+        'n_reps': 8,
+        'n_test': 10000,
+        'n_holdout': 500,
+        'num_reweights': 3,
+        'skip_spo': False,
+    },
+    'deprecated-paper': {
+        'n_train_values': [100, 250, 500, 1000, 1500, 2000],
+        'degrees': [1, 2, 4, 6, 8],
+        'mixture_weights': [0.2, 0.3975, 0.595, 0.7925, 0.99],
+        'n_reps': 12,
+        'n_test': 10000,
+        'n_holdout': 1000,
+        'num_reweights': 1,
+        'skip_spo': True,
+    },
+}
+
+
 def parse_int_list(value):
     return [int(part) for part in value.split(',') if part]
 
@@ -53,6 +93,29 @@ def build_graph_params(grid_dim):
         'start_node': scalar_nodes[(0, 0)],
         'end_node': scalar_nodes[(grid_dim - 1, grid_dim - 1)]
     }
+
+
+def apply_preset(args):
+    preset = DEFAULTS if args.preset == 'custom' else PRESETS[args.preset]
+    if args.n_train_values is None:
+        args.n_train_values = preset['n_train_values']
+    if args.degrees is None:
+        args.degrees = preset['degrees']
+    if args.mixture_weights is None:
+        args.mixture_weights = preset['mixture_weights']
+    if args.context_mixture_weights is None:
+        args.context_mixture_weights = list(args.mixture_weights)
+    if args.n_reps is None:
+        args.n_reps = preset['n_reps']
+    if args.n_test is None:
+        args.n_test = preset['n_test']
+    if args.n_holdout is None:
+        args.n_holdout = preset['n_holdout']
+    if args.num_reweights is None:
+        args.num_reweights = preset['num_reweights']
+    if args.use_preset_skip_spo:
+        args.skip_spo = preset['skip_spo']
+    return args
 
 
 def run_experiment(args):
@@ -114,28 +177,31 @@ def run_experiment(args):
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument('--preset', choices=sorted(PRESETS.keys()), default='custom')
     parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--grid-dim', type=int, default=5)
     parser.add_argument('--p-features', type=int, default=5)
-    parser.add_argument('--n-train-values', type=parse_int_list, default=parse_int_list('100,1000,2000'))
-    parser.add_argument('--degrees', type=parse_int_list, default=parse_int_list('1,2,4,6,8'))
-    parser.add_argument('--mixture-weights', type=parse_float_list, default=parse_float_list('0.2,0.4,0.6,0.8'))
+    parser.add_argument('--n-train-values', type=parse_int_list, default=None)
+    parser.add_argument('--degrees', type=parse_int_list, default=None)
+    parser.add_argument('--mixture-weights', type=parse_float_list, default=None)
     parser.add_argument('--context-mixture-weights', type=parse_float_list, default=None)
-    parser.add_argument('--n-reps', type=int, default=8)
+    parser.add_argument('--n-reps', type=int, default=None)
     parser.add_argument('--n-jobs', type=int, default=-1)
     parser.add_argument('--verbose', type=int, default=20)
-    parser.add_argument('--num-reweights', type=int, default=3)
-    parser.add_argument('--n-test', type=int, default=10000)
-    parser.add_argument('--n-holdout', type=int, default=500)
+    parser.add_argument('--num-reweights', type=int, default=None)
+    parser.add_argument('--n-test', type=int, default=None)
+    parser.add_argument('--n-holdout', type=int, default=None)
     parser.add_argument('--polykernel-noise-half-width', type=float, default=0.5)
     parser.add_argument('--weight-model', choices=['ridgecv', 'linear', 'rf'], default='ridgecv')
     parser.add_argument('--context-folds', type=int, default=5)
     parser.add_argument('--context-weight-cv', type=int, default=3)
     parser.add_argument('--context-cap-quantile', type=float, default=0.9)
     parser.add_argument('--context-max-weight', type=float, default=1.0)
+    parser.add_argument('--use-preset-skip-spo', action='store_true')
     parser.add_argument('--skip-spo', action='store_true')
     parser.add_argument('--output', default='results/context_reweighting.csv')
     args = parser.parse_args()
+    args = apply_preset(args)
 
     results_df = run_experiment(args)
 

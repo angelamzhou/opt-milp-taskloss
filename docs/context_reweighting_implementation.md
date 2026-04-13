@@ -146,6 +146,12 @@ The script entry point is:
 That script reproduces the notebook-style shortest-path setup but makes it
 callable from the command line and configurable by flags.
 
+It now also exposes named presets for the historical experiment grids already
+present in the repository:
+
+- `--preset deprecated-paper`
+- `--preset may19`
+
 ## Why This Is Minimal
 
 The implementation deliberately avoids:
