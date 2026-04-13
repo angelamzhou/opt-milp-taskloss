@@ -1,0 +1,148 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{booktabs}
+
+\title{\(\mu\)-Selection Diagnostics for Reweighted Least Squares}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\section*{Goal}
+For each training replication and each candidate mixture weight \(\mu \in \mathcal{M}\), we fit a reweighted least-squares model and then evaluate diagnostics that may help select \(\mu\) without using test regret. We compare those diagnostics against the hindsight-best \(\mu\), defined as the value minimizing test regret within the same replication and method family.
+
+We study two method families:
+\begin{enumerate}
+    \item \textbf{Task-loss reweighting}:
+    \[
+    w_{e,i}(\mu) = (1-\mu) + \mu \lvert x^*_{e,i} - \hat{x}_{e,i}^{\mathrm{pilot}} \rvert,
+    \]
+    where \(e\) indexes cost coordinates or edges and \(i\) indexes training examples.
+    \item \textbf{Context reweighting}:
+    \[
+    \alpha_i^{\mathrm{raw}}(\mu) = (1-\mu) + \mu \,\widetilde{r}_i,
+    \]
+    where \(\widetilde{r}_i \in [0,1]\) is a clipped and normalized pilot regret, followed by a cross-fitted regression of \(\alpha_i^{\mathrm{raw}}(\mu)\) on context features \(z_i\).
+\end{enumerate}
+
+\section*{Pilot Model}
+Let \(\hat{c}^{\mathrm{pilot}}(z)\) be the ordinary least-squares pilot predictor. On a sample \((z_i, c_i)\), let
+\[
+\hat{x}^{\mathrm{pilot}}_i \in \arg\min_{x \in \mathcal{X}} \hat{c}^{\mathrm{pilot}}(z_i)^\top x
+\]
+and let the realized decision regret be
+\[
+r_i^{\mathrm{pilot}} = c_i^\top x_i^* - c_i^\top \hat{x}^{\mathrm{pilot}}_i.
+\]
+We use \(\lvert r_i^{\mathrm{pilot}} \rvert\) throughout.
+
+For the scalar regret-based diagnostics, we define
+\[
+\widetilde{r}_i
+=
+\operatorname{clip}\!\left(
+\frac{\lvert r_i^{\mathrm{pilot}} \rvert}{q_{0.9}(\lvert r^{\mathrm{pilot}} \rvert)},
+0,1
+\right),
+\]
+with the convention that if the denominator is zero, all weights are set to zero before mixing with the uniform floor.
+
+\section*{Candidate Models}
+For each \(\mu\), each method family yields a fitted predictor \(\hat{c}_{\mu}(z)\). We then compute several diagnostics for that fitted predictor.
+
+\section*{Diagnostics}
+Let \(\mathcal{V}\) denote the holdout set and let \(d\) be the number of cost coordinates. For any fitted predictor \(\hat{c}\), define the per-sample cost prediction error
+\[
+\ell_{\mathrm{mse}}(i; \hat{c}) = \frac{1}{d}\|\hat{c}(z_i) - c_i\|_2^2.
+\]
+
+\subsection*{1. Holdout MSE}
+We evaluate
+\[
+D_{\mathrm{holdout\_mse}}(\mu)
+=
+\frac{1}{|\mathcal{V}|}\sum_{i \in \mathcal{V}} \ell_{\mathrm{mse}}(i; \hat{c}_{\mu}).
+\]
+
+\subsection*{3. Holdout Regret}
+Let
+\[
+\hat{x}_{\mu,i} \in \arg\min_{x \in \mathcal{X}} \hat{c}_{\mu}(z_i)^\top x.
+\]
+Then
+\[
+D_{\mathrm{holdout\_regret}}(\mu)
+=
+\frac{1}{|\mathcal{V}|}\sum_{i \in \mathcal{V}}
+\left|c_i^\top x_i^* - c_i^\top \hat{x}_{\mu,i}\right|.
+\]
+
+\subsection*{4. Pilot-Regret-Weighted Holdout MSE}
+Using pilot holdout regrets, define scalar holdout weights
+\[
+\alpha_i^{\mathrm{holdout}}(\mu) = (1-\mu) + \mu \widetilde{r}_i^{\mathrm{holdout}}.
+\]
+Then
+\[
+D_{\mathrm{prw\_holdout\_mse}}(\mu)
+=
+\frac{\sum_{i \in \mathcal{V}} \alpha_i^{\mathrm{holdout}}(\mu)\,\ell_{\mathrm{mse}}(i; \hat{c}_{\mu})}
+{\sum_{i \in \mathcal{V}} \alpha_i^{\mathrm{holdout}}(\mu)}.
+\]
+This diagnostic tests whether cost prediction error, when concentrated on examples with high pilot regret, better predicts the best \(\mu\).
+
+\subsection*{5. Cross-Validated Training MSE}
+Partition the training set into \(K\) folds. For fold \(k\), fit the candidate method on the training portion only, obtaining \(\hat{c}_{\mu}^{(-k)}\), and evaluate on the validation fold \(\mathcal{F}_k\):
+\[
+D_{\mathrm{cv\_mse}}(\mu)
+=
+\frac{1}{K}\sum_{k=1}^K
+\left(
+\frac{1}{|\mathcal{F}_k|}\sum_{i \in \mathcal{F}_k} \ell_{\mathrm{mse}}(i; \hat{c}_{\mu}^{(-k)})
+\right).
+\]
+
+\subsection*{6. Cross-Validated Pilot-Regret-Weighted MSE}
+Within each fold, we also fit a fold-local pilot model and compute pilot regrets on the validation fold. Let \(\alpha_{i,k}^{\mathrm{cv}}(\mu)\) be the corresponding fold-local scalar regret weights. Then
+\[
+D_{\mathrm{cv\_prw\_mse}}(\mu)
+=
+\frac{1}{K}\sum_{k=1}^K
+\left(
+\frac{\sum_{i \in \mathcal{F}_k} \alpha_{i,k}^{\mathrm{cv}}(\mu)\,\ell_{\mathrm{mse}}(i; \hat{c}_{\mu}^{(-k)})}
+{\sum_{i \in \mathcal{F}_k} \alpha_{i,k}^{\mathrm{cv}}(\mu)}
+\right).
+\]
+
+\section*{Evaluation Protocol}
+For each replication, degree, training size, and method family:
+\begin{enumerate}
+    \item Fit all candidate models over a grid \(\mathcal{M}\) of \(\mu\) values.
+    \item Record each diagnostic \(D(\mu)\) together with the realized test regret \(R_{\mathrm{test}}(\mu)\).
+    \item For each diagnostic, select
+    \[
+    \hat{\mu}_D \in \arg\min_{\mu \in \mathcal{M}} D(\mu).
+    \]
+    \item Define the hindsight oracle
+    \[
+    \mu^* \in \arg\min_{\mu \in \mathcal{M}} R_{\mathrm{test}}(\mu).
+    \]
+    \item Compare \(\hat{\mu}_D\) against \(\mu^*\) using:
+    \begin{itemize}
+        \item exact match rate, \(\mathbb{P}(\hat{\mu}_D = \mu^*)\),
+        \item average regret gap, \(R_{\mathrm{test}}(\hat{\mu}_D) - R_{\mathrm{test}}(\mu^*)\),
+        \item average selected test regret.
+    \end{itemize}
+\end{enumerate}
+
+\section*{Implementation Notes}
+The diagnostics are computed with minimal changes to the existing experiment pipeline:
+\begin{itemize}
+    \item the existing holdout split is reused for diagnostics \(1\), \(3\), and \(4\),
+    \item \(K\)-fold cross-validation is added only for diagnostics \(5\) and \(6\),
+    \item all diagnostics are written per \((\texttt{task\_id}, \texttt{algo}, \mu)\) row so that selection can be analyzed downstream without rerunning the experiment.
+\end{itemize}
+
+\end{document}

@@ -38,6 +38,11 @@ RESULT_COLUMNS = [
     'mixture_weight',
     'avg_raw_weight',
     'avg_fitted_weight',
+    'holdout_mse',
+    'holdout_regret',
+    'pilot_regret_weighted_holdout_mse',
+    'cv_train_mse',
+    'cv_train_weighted_mse',
 ]
 
 
@@ -202,6 +207,12 @@ def clean_and_resume_output(output_path, expected_row_count):
         return set()
     if 'task_id' not in existing.columns:
         raise ValueError('existing output file is not resumable because it lacks a task_id column')
+    missing_columns = [column for column in RESULT_COLUMNS if column not in existing.columns]
+    if missing_columns:
+        raise ValueError(
+            'existing output file uses an older schema; rerun with --overwrite or a new --output path. '
+            'Missing columns: %s' % ', '.join(missing_columns)
+        )
 
     counts = existing.groupby('task_id').size()
     complete_ids = set(counts[counts == expected_row_count].index.tolist())
@@ -258,7 +269,9 @@ def run_single_task(task, args, graph_params, b_true, X_test_cache, c_test_cache
         context_weight_cv=args.context_weight_cv,
         context_cap_quantile=args.context_cap_quantile,
         context_max_weight=args.context_max_weight,
-        run_spo=not args.skip_spo
+        run_spo=not args.skip_spo,
+        compute_mu_diagnostics=args.compute_mu_diagnostics,
+        diagnostic_cv_folds=args.diagnostic_cv_folds,
     )
 
 
@@ -392,6 +405,8 @@ def main():
     parser.add_argument('--context-weight-cv', type=int, default=3)
     parser.add_argument('--context-cap-quantile', type=float, default=0.9)
     parser.add_argument('--context-max-weight', type=float, default=1.0)
+    parser.add_argument('--compute-mu-diagnostics', action='store_true')
+    parser.add_argument('--diagnostic-cv-folds', type=int, default=5)
     parser.add_argument('--use-preset-skip-spo', action='store_true')
     parser.add_argument('--skip-spo', action='store_true')
     parser.add_argument('--overwrite', action='store_true')

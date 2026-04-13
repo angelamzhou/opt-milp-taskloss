@@ -190,6 +190,10 @@ def get_weighted_predictors(regressor, c_train, X_train,weights=None, random_reg
         predictors[d_] = regr
     return predictors
 
+
+def predict_costs(predictors, X):
+    return np.asarray([predictors[d_].predict(X.T) for d_ in sorted(predictors.keys())])
+
 def get_regret(predictors,X_train, c_train, trainDict, 
                X_test, c_test, testDict, 
                oracle, quiet=False):
@@ -201,7 +205,7 @@ def get_regret(predictors,X_train, c_train, trainDict,
 
 def computeDataSetRegret(predictors, X, c, dataDict, oracle):
     [d,n] = c.shape
-    c_preds = np.asarray([ predictors[d_].predict(X.T) for d_ in range(d)])
+    c_preds = predict_costs(predictors, X)
     
     regrets = np.zeros(n);
     x_star_regr = np.zeros(c_preds.shape)
@@ -217,6 +221,15 @@ def computeDataSetRegret(predictors, X, c, dataDict, oracle):
 
 def _mean_abs(values):
     return np.mean(np.abs(values))
+
+
+def compute_prediction_mse(predictors, X, c, sample_weight=None):
+    c_preds = predict_costs(predictors, X)
+    sample_errors = np.mean(np.square(c_preds - c), axis=0)
+    if sample_weight is None:
+        return float(np.mean(sample_errors))
+    sample_weight = np.asarray(sample_weight).reshape((-1,))
+    return float(np.average(sample_errors, weights=sample_weight))
 
 
 def _signed_regret_to_loss(regrets):
@@ -240,6 +253,13 @@ def get_raw_context_weights(regrets, mu, cap_quantile=0.9, max_weight=1.0):
     regret_loss = _signed_regret_to_loss(regrets)
     normalized_loss = _normalize_regret_weights(regret_loss, cap_quantile=cap_quantile)
     return (1-mu) + mu*max_weight*normalized_loss
+
+
+def fit_reweight_predictors(regressor, x_star_regr, mu, c_train, X_train, random_regr=False):
+    weights = mu*np.abs(x_star_regr) + (1-mu)*np.ones(c_train.shape)
+    predictors = get_weighted_predictors(regressor, c_train, X_train, weights,
+                                         random_regr=random_regr)
+    return predictors, weights
 
 
 def _build_weight_estimator(weight_regressor=None, weight_param_grid=None,
@@ -291,6 +311,129 @@ def estimate_context_weights_cross_fitted(X_train, raw_weights, mu, n_folds=5,
 
     return np.clip(fitted_weights, lower, upper)
 
+
+def fit_context_reweight_predictors(regressor, regrets, mu, c_train, X_train,
+                                    weight_regressor=None, weight_param_grid=None,
+                                    n_folds=5, weight_cv=3, cap_quantile=0.9,
+                                    max_weight=1.0, random_regr=False):
+    raw_weights = get_raw_context_weights(regrets, mu, cap_quantile=cap_quantile,
+                                          max_weight=max_weight)
+    fitted_weights = estimate_context_weights_cross_fitted(
+        X_train, raw_weights, mu, n_folds=n_folds,
+        weight_regressor=weight_regressor,
+        weight_param_grid=weight_param_grid,
+        weight_cv=weight_cv,
+        max_weight=max_weight,
+        random_regr=random_regr
+    )
+    predictors = get_weighted_predictors(regressor, c_train, X_train, fitted_weights,
+                                         random_regr=random_regr)
+    return predictors, raw_weights, fitted_weights
+
+
+def evaluate_mu_diagnostics(predictors, mu, X_validation, c_validation, validationDict,
+                            pilot_validation_regrets, regressor, algo_name, X_train,
+                            c_train, graph_params, weight_regressor=None,
+                            weight_param_grid=None, context_n_folds=5,
+                            context_weight_cv=3, cap_quantile=0.9,
+                            max_weight=1.0, diagnostic_cv_folds=5,
+                            random_regr=False):
+    oracle = ShortestPathOracle(graph_params)
+    holdout_regrets, _ = computeDataSetRegret(predictors, X_validation, c_validation,
+                                              validationDict, oracle)
+    holdout_weights = get_raw_context_weights(
+        pilot_validation_regrets, mu, cap_quantile=cap_quantile,
+        max_weight=max_weight
+    )
+    cv_train_mse, cv_train_weighted_mse = cross_validate_mu_diagnostics(
+        algo_name=algo_name,
+        regressor=regressor,
+        mu=mu,
+        X_train=X_train,
+        c_train=c_train,
+        graph_params=graph_params,
+        weight_regressor=weight_regressor,
+        weight_param_grid=weight_param_grid,
+        context_n_folds=context_n_folds,
+        context_weight_cv=context_weight_cv,
+        cap_quantile=cap_quantile,
+        max_weight=max_weight,
+        diagnostic_cv_folds=diagnostic_cv_folds,
+        random_regr=random_regr,
+    )
+    return {
+        'holdout_mse': compute_prediction_mse(predictors, X_validation, c_validation),
+        'holdout_regret': _mean_abs(holdout_regrets),
+        'pilot_regret_weighted_holdout_mse': compute_prediction_mse(
+            predictors, X_validation, c_validation, sample_weight=holdout_weights
+        ),
+        'cv_train_mse': cv_train_mse,
+        'cv_train_weighted_mse': cv_train_weighted_mse,
+    }
+
+
+def cross_validate_mu_diagnostics(algo_name, regressor, mu, X_train, c_train,
+                                  graph_params, weight_regressor=None,
+                                  weight_param_grid=None, context_n_folds=5,
+                                  context_weight_cv=3, cap_quantile=0.9,
+                                  max_weight=1.0, diagnostic_cv_folds=5,
+                                  random_regr=False):
+    n_train = X_train.shape[1]
+    n_splits = min(diagnostic_cv_folds, n_train)
+    if n_splits < 2:
+        return np.nan, np.nan
+
+    splitter = KFold(n_splits=n_splits, shuffle=True, random_state=1)
+    oracle = ShortestPathOracle(graph_params)
+    fold_mse = []
+    fold_weighted_mse = []
+
+    for train_index, val_index in splitter.split(np.arange(n_train)):
+        X_fit = X_train[:, train_index]
+        c_fit = c_train[:, train_index]
+        X_val = X_train[:, val_index]
+        c_val = c_train[:, val_index]
+
+        fit_dict = generateInstanceDict(X_fit, c_fit, oracle)
+        val_dict = generateInstanceDict(X_val, c_val, oracle)
+
+        pilot_predictors = get_weighted_predictors(
+            regressor, c_fit, X_fit, random_regr=random_regr
+        )
+        fit_regrets, fit_x_reg, val_pilot_regrets, _ = get_regret(
+            pilot_predictors, X_fit, c_fit, fit_dict, X_val, c_val, val_dict, oracle
+        )
+
+        if algo_name == 'reweight_LS':
+            candidate_predictors, _ = fit_reweight_predictors(
+                regressor, fit_x_reg, mu, c_fit, X_fit, random_regr=random_regr
+            )
+        elif algo_name == 'context_reweight_LS':
+            candidate_predictors, _, _ = fit_context_reweight_predictors(
+                regressor, fit_regrets, mu, c_fit, X_fit,
+                weight_regressor=weight_regressor,
+                weight_param_grid=weight_param_grid,
+                n_folds=context_n_folds,
+                weight_cv=context_weight_cv,
+                cap_quantile=cap_quantile,
+                max_weight=max_weight,
+                random_regr=random_regr,
+            )
+        else:
+            raise ValueError('unknown algo_name for mu diagnostics: %s' % algo_name)
+
+        val_weights = get_raw_context_weights(
+            val_pilot_regrets, mu, cap_quantile=cap_quantile,
+            max_weight=max_weight
+        )
+        fold_mse.append(compute_prediction_mse(candidate_predictors, X_val, c_val))
+        fold_weighted_mse.append(
+            compute_prediction_mse(candidate_predictors, X_val, c_val,
+                                   sample_weight=val_weights)
+        )
+
+    return float(np.mean(fold_mse)), float(np.mean(fold_weighted_mse))
+
 def feasible_least_squares(regressor, x_star_regr, mu, c_train, X_train, trainDict,
                            c_test, X_test, testDict, oracle, random_regr=False):
     '''
@@ -300,9 +443,9 @@ def feasible_least_squares(regressor, x_star_regr, mu, c_train, X_train, trainDi
     c_train: training data, cost vector realizations
     X_train: training data 
     '''
-    # Mix decision weights with uniform 
-    weights = mu*np.abs(x_star_regr) + (1-mu)*np.ones(c_train.shape)
-    weighted_predictors = get_weighted_predictors(regressor, c_train, X_train, weights, random_regr=random_regr)
+    weighted_predictors, weights = fit_reweight_predictors(
+        regressor, x_star_regr, mu, c_train, X_train, random_regr=random_regr
+    )
     [train_reg,train_x_reg, test_reg, test_x_reg] = get_regret(weighted_predictors,
             X_train, c_train, trainDict, X_test, c_test, testDict, oracle, quiet=False)
     return [weighted_predictors, train_reg,train_x_reg, test_reg, test_x_reg]
@@ -316,18 +459,16 @@ def feasible_context_least_squares(regressor, regrets, mu, c_train, X_train, tra
     '''
     One-step pilot + cross-fitted alpha regression + weighted least squares.
     '''
-    raw_weights = get_raw_context_weights(regrets, mu, cap_quantile=cap_quantile,
-                                          max_weight=max_weight)
-    fitted_weights = estimate_context_weights_cross_fitted(
-        X_train, raw_weights, mu, n_folds=n_folds,
+    weighted_predictors, raw_weights, fitted_weights = fit_context_reweight_predictors(
+        regressor, regrets, mu, c_train, X_train,
         weight_regressor=weight_regressor,
         weight_param_grid=weight_param_grid,
+        n_folds=n_folds,
         weight_cv=weight_cv,
+        cap_quantile=cap_quantile,
         max_weight=max_weight,
         random_regr=random_regr
     )
-    weighted_predictors = get_weighted_predictors(regressor, c_train, X_train,
-                                                  fitted_weights, random_regr=random_regr)
     [train_reg, train_x_reg, test_reg, test_x_reg] = get_regret(
         weighted_predictors, X_train, c_train, trainDict,
         X_test, c_test, testDict, oracle, quiet=False
@@ -370,7 +511,8 @@ def run_replication_over_weights(data_params, X_test, c_test, testDict,
                                  weight_regressor=None, weight_param_grid=None,
                                  context_n_folds=5, context_weight_cv=3,
                                  context_cap_quantile=0.9, context_max_weight=1.0,
-                                 run_spo=True): 
+                                 run_spo=True, compute_mu_diagnostics=False,
+                                 diagnostic_cv_folds=5): 
     '''
     Run a replication under fixed data parameters 
     Assume pre-generated test dataset (to reduce noise in test evaluation)
@@ -394,12 +536,16 @@ def run_replication_over_weights(data_params, X_test, c_test, testDict,
         n_test, n_holdout, polykernel_degree,polykernel_noise_half_width,B_true,gen_test=False)
     
     trainDict = generateInstanceDict(X_train, c_train, oracle)
+    validationDict = generateInstanceDict(X_validation, c_validation, oracle)
 
     # Learn Initial (LS) predictor 
     start_time = time.time()
     predictors = get_weighted_predictors(regressor, c_train, X_train, random_regr=random_regr )
     [regrets, x_star_regr,regrets_tst, x_star_regr_tst] = get_regret(predictors, X_train, c_train, trainDict,
                                                                       X_test, c_test, testDict, oracle)
+    validation_regrets, validation_x_reg = computeDataSetRegret(
+        predictors, X_validation, c_validation, validationDict, oracle
+    )
     ls_time = time.time() - start_time
     res = {'n_train':n_train,
         'polykernel_degree': polykernel_degree,
@@ -430,6 +576,28 @@ def run_replication_over_weights(data_params, X_test, c_test, testDict,
                 'tr_regret': _mean_abs(train_reg),
                 'tst_regret': _mean_abs(test_reg)
             }
+            if compute_mu_diagnostics:
+                res.update(evaluate_mu_diagnostics(
+                    weighted_predictors,
+                    mixture_weights[k],
+                    X_validation,
+                    c_validation,
+                    validationDict,
+                    validation_regrets,
+                    regressor,
+                    'reweight_LS',
+                    X_train,
+                    c_train,
+                    graph_params,
+                    weight_regressor=weight_regressor,
+                    weight_param_grid=weight_param_grid,
+                    context_n_folds=context_n_folds,
+                    context_weight_cv=context_weight_cv,
+                    cap_quantile=context_cap_quantile,
+                    max_weight=context_max_weight,
+                    diagnostic_cv_folds=diagnostic_cv_folds,
+                    random_regr=random_regr,
+                ))
             results.append(res)
             
             #For multiple reweights use the new weights
@@ -463,6 +631,28 @@ def run_replication_over_weights(data_params, X_test, c_test, testDict,
                 'avg_raw_weight': np.mean(raw_weights),
                 'avg_fitted_weight': np.mean(fitted_weights)
             }
+            if compute_mu_diagnostics:
+                res.update(evaluate_mu_diagnostics(
+                    weighted_predictors,
+                    mu,
+                    X_validation,
+                    c_validation,
+                    validationDict,
+                    validation_regrets,
+                    regressor,
+                    'context_reweight_LS',
+                    X_train,
+                    c_train,
+                    graph_params,
+                    weight_regressor=weight_regressor,
+                    weight_param_grid=weight_param_grid,
+                    context_n_folds=context_n_folds,
+                    context_weight_cv=context_weight_cv,
+                    cap_quantile=context_cap_quantile,
+                    max_weight=context_max_weight,
+                    diagnostic_cv_folds=diagnostic_cv_folds,
+                    random_regr=random_regr,
+                ))
             results.append(res)
     
     if run_spo:
