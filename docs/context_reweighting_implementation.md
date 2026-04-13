@@ -193,6 +193,20 @@ python experiments/context_reweighting_experiment.py \
   --output results/context_reweighting.csv
 ```
 
+For cluster execution, the most successful early configuration was a lighter
+paper-style run with:
+
+- `--skip-spo`
+- a single mixture weight `0.7925`
+- `joblib` process workers instead of threads
+- moderate worker count and smaller batch size
+
+Example:
+
+```bash
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv > results/paper_figure5_nospo_mu07925.log 2>&1 &
+```
+
 For a small non-linear weight regressor with explicit tuning:
 
 ```bash

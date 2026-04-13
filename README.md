@@ -73,50 +73,28 @@ One-line install:
 python -m pip install numpy pandas scikit-learn joblib networkx scipy gurobipy
 ```
 
-Launch the paper-style Figure 5 run:
+Recommended first cluster run:
 
 ```bash
-mkdir -p results && python experiments/context_reweighting_experiment.py \
-  --preset paper-figure5 \
-  --parallel-backend threads \
-  --n-jobs 4 \
-  --batch-size 4 \
-  --verbose 0 \
-  --output results/paper_figure5_context.csv \
-  | tee results/paper_figure5_context.log
+mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv > results/paper_figure5_nospo_mu07925.log 2>&1 &
+```
+
+Full paper-style Figure 5 run including `SPO`:
+
+```bash
+mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_context.csv > results/paper_figure5_context.log 2>&1 &
 ```
 
 Resume after interruption:
 
 ```bash
-python experiments/context_reweighting_experiment.py \
-  --preset paper-figure5 \
-  --parallel-backend threads \
-  --n-jobs 4 \
-  --batch-size 4 \
-  --verbose 0 \
-  --output results/paper_figure5_context.csv \
-  | tee -a results/paper_figure5_context.log
-```
-
-Restart from scratch:
-
-```bash
-python experiments/context_reweighting_experiment.py \
-  --preset paper-figure5 \
-  --parallel-backend threads \
-  --n-jobs 4 \
-  --batch-size 4 \
-  --verbose 0 \
-  --overwrite \
-  --output results/paper_figure5_context.csv \
-  | tee results/paper_figure5_context.log
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --mixture-weights 0.7925 --context-mixture-weights 0.7925 --parallel-backend processes --n-jobs 20 --batch-size 8 --verbose 0 --output results/paper_figure5_nospo_mu07925.csv >> results/paper_figure5_nospo_mu07925.log 2>&1 &
 ```
 
 Progress:
 
 ```bash
-tail -f results/paper_figure5_context.log
+tail -f results/paper_figure5_nospo_mu07925.log
 ```
 
 ### Summarizing Figure 5 style results
@@ -139,6 +117,7 @@ alongside the mean `LS` and `SPO` results.
 ### 9. Practical notes
 
 -- The run is long because `SPO` dominates runtime.
--- `--n-jobs 4` is conservative; increase it gradually if the VM has headroom.
--- The current runner defaults to thread-based parallelism because process-based
-   joblib backends can hit system semaphore restrictions on some environments.
+-- On the cluster, `joblib` with `--parallel-backend processes` behaved much
+   better than `threads` for the lighter no-`SPO` run.
+-- A practical first cluster target is the no-`SPO`, single-`mu=0.7925` run.
+-- For the full `SPO` run, use smaller batches and moderate worker counts first.
