@@ -1,0 +1,175 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{microtype}
+
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\clip}{\mathrm{clip}}
+\newcommand{\Reg}{\mathrm{Reg}}
+
+\title{Implementation Note: Decision-Weight Regression via Cross-Fitted Alpha Weights}
+\date{}
+
+\begin{document}
+\maketitle
+
+\paragraph{Problem setting.}
+For each context $z_i \in \R^p$, we observe one realized cost vector
+$c_i \in \R^d$ and evaluate decisions through the linear optimization problem
+\[
+  x^*(c) \in \arg\min_{x \in \mathcal{X}} c^\top x.
+\]
+Given a predicted cost vector $\hat c_i$, the realized decision regret is
+\[
+  \Reg_i
+  := c_i^\top\!\bigl(x^*(\hat c_i) - x^*(c_i)\bigr)
+  \ge 0.
+\]
+
+\paragraph{Goal.}
+We want to replace noisy label-dependent decision weights by context-only
+weights $\alpha_i \approx \alpha(z_i)$, then use those $\alpha_i$ as ordinary
+sample weights in a weighted least-squares cost fit.
+
+\section*{1. Pilot model and regret-based raw weights}
+
+We first fit an ordinary least-squares pilot model
+\[
+  \hat f \in \arg\min_{f \in \mathcal{F}}
+  \sum_{i=1}^n \|f(z_i) - c_i\|_2^2.
+\]
+Using the predicted costs $\hat c_i := \hat f(z_i)$, we compute the realized
+decision regret $\Reg_i$.
+
+The implementation then forms bounded raw decision weights
+\[
+  w_i^{\mathrm{raw}}
+  := (1-\mu) + \mu \, \phi(\Reg_i),
+  \qquad \mu \in [0,1].
+\]
+Here $\phi$ is a bounded monotone transform. In the current implementation,
+\[
+  \phi(r) := \clip_{[0,1]}\!\left(\frac{r}{q_{0.9}}\right),
+\]
+where $q_{0.9}$ is the empirical $90$th percentile of the training regrets.
+If the percentile is zero, the code falls back to the maximum regret, and if
+that is also zero then all transformed regrets are set to zero.
+
+Therefore the raw weights satisfy
+\[
+  w_i^{\mathrm{raw}} \in [1-\mu,\,1-\mu+\mu W_{\max}],
+\]
+with the current default $W_{\max}=1$.
+
+\section*{2. Alpha-weight regression}
+
+The key step is to estimate context-only weights by regressing these raw
+decision weights on context.
+
+Let $I_1,\dots,I_M$ be folds of $\{1,\dots,n\}$. For each fold $m$, we fit a
+weight regression model on the complement:
+\[
+  q^{(-m)}
+  \in \arg\min_{q \in \mathcal{H}}
+  \sum_{i \notin I_m} \bigl(w_i^{\mathrm{raw}} - q(z_i)\bigr)^2.
+\]
+Then for each held-out example $i \in I_m$, we define the alpha weight
+\[
+  \hat\alpha_i
+  := \clip_{[1-\mu,\,1-\mu+\mu W_{\max}]}\!\bigl(q^{(-m)}(z_i)\bigr).
+\]
+
+\paragraph{Interpretation.}
+The regression target is the raw decision weight, which is itself a transformed
+regret signal. Thus the learned alpha weights are context-smoothed versions of
+the regret-based weighting rule:
+\[
+  z_i \mapsto \hat\alpha_i
+  \approx \E\!\left[w^{\mathrm{raw}} \mid Z = z_i\right].
+\]
+
+\section*{3. Weighted least-squares refit}
+
+Once the out-of-fold alpha weights are available, we fit the final cost model
+with weighted squared loss:
+\[
+  \tilde f
+  \in \arg\min_{f \in \mathcal{F}}
+  \sum_{i=1}^n \hat\alpha_i \, \|f(z_i) - c_i\|_2^2.
+\]
+The repository implements this with sklearn regressors and `sample_weight`.
+Each training example gets one scalar weight $\hat\alpha_i$, shared across all
+cost coordinates.
+
+\section*{4. Algorithm}
+
+\begin{algorithm}[h]
+\caption{Cross-fitted decision-weight regression}
+\begin{algorithmic}[1]
+\Require Data $\{(z_i,c_i)\}_{i=1}^n$, predictor class $\mathcal{F}$, weight-regression class $\mathcal{H}$, folds $I_1,\dots,I_M$, mixing weight $\mu \in [0,1]$.
+\State Fit pilot predictor $\hat f$ by ordinary least squares.
+\For{$i=1,\dots,n$}
+    \State Compute pilot prediction $\hat c_i \gets \hat f(z_i)$.
+    \State Compute regret $\Reg_i \gets c_i^\top(x^*(\hat c_i) - x^*(c_i))$.
+    \State Form raw weight $w_i^{\mathrm{raw}} \gets (1-\mu) + \mu \phi(\Reg_i)$.
+\EndFor
+\For{$m=1,\dots,M$}
+        \State Fit $q^{(-m)}$ on $\{(z_i,w_i^{\mathrm{raw}}): i \notin I_m\}$.
+    \For{each $i \in I_m$}
+        \State $\hat\alpha_i \gets \clip_{[1-\mu,\,1-\mu+\mu W_{\max}]}(q^{(-m)}(z_i))$.
+    \EndFor
+\EndFor
+\State Fit final predictor $\tilde f$ using weighted least squares with sample weights $\hat\alpha_i$.
+\State \Return $\tilde f$.
+\end{algorithmic}
+\end{algorithm}
+
+\section*{5. Concrete sklearn implementation}
+
+The code path is:
+
+\begin{enumerate}
+\item Fit the pilot cost model with \texttt{get\_weighted\_predictors(..., weights=None)}.
+\item Compute training regrets with \texttt{get\_regret(...)}.
+\item Convert regrets to raw weights with \texttt{get\_raw\_context\_weights(...)}.
+\item Cross-fit the alpha weights with \texttt{estimate\_context\_weights\_cross\_fitted(...)}.
+\item Refit the final cost model with \texttt{get\_weighted\_predictors(...)} using the estimated alpha vector as \texttt{sample\_weight}.
+\end{enumerate}
+
+The default weight regressor is ridge regression with internal tuning:
+\[
+  \texttt{RidgeCV}(\alpha \in 10^{-4}, 10^{-3}, \dots, 10^4).
+\]
+The experiment script also exposes:
+
+\begin{itemize}
+\item linear regression with no tuning
+\item random forest regression with a small \texttt{GridSearchCV} sweep
+\end{itemize}
+
+\section*{6. Why cross-fitting is used}
+
+If the same data were used both to fit the weight regressor and to evaluate its
+predicted alpha weights on the same examples, the resulting weights could
+overfit the realized regret noise. Cross-fitting avoids that direct reuse by
+ensuring each $\hat\alpha_i$ is predicted out of fold.
+
+\section*{7. Summary}
+
+The implemented method is:
+
+\begin{itemize}
+\item decision-aware through regret-based raw weights
+\item context-only through regression of those raw weights on $z$
+\item regularized and tunable through sklearn weight regressors
+\item minimal in code because the final update remains an ordinary weighted
+least-squares refit
+\end{itemize}
+
+\end{document}
