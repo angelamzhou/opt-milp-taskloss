@@ -98,7 +98,7 @@ mkdir -p results && nohup python -u experiments/context_reweighting_experiment.p
 Mu-selection diagnostics run:
 
 ```bash
-mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --compute-mu-diagnostics --diagnostic-cv-folds 5 --parallel-backend processes --n-jobs 16 --batch-size 8 --verbose 0 --output results/paper_figure5_mu_diagnostics.csv --run-log-path results/paper_figure5_mu_diagnostics.log > results/paper_figure5_mu_diagnostics.log 2>&1 &
+mkdir -p results && nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --compute-mu-diagnostics --diagnostic-cv-folds 5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_mu_diagnostics.csv --run-log-path results/paper_figure5_mu_diagnostics.log > results/paper_figure5_mu_diagnostics.log 2>&1 &
 ```
 
 Resume after interruption:
@@ -148,3 +148,9 @@ alongside the mean `LS` and `SPO` results.
 -- Use the no-`SPO` and single-`mu=0.7925` commands above when you want a
    faster turnaround run.
 -- For the full `SPO` run, use smaller batches and moderate worker counts first.
+-- For the `mu`-diagnostics sweep, `joblib` worker `SIGKILL(-9)` errors should
+   be interpreted as likely OS-level memory kills, not Python garbage
+   collection issues.
+-- If that happens on the diagnostics sweep, first reduce `--n-jobs` to `8`
+   or `12`, or increase memory per worker before trying a larger process pool
+   again.

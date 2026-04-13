@@ -215,7 +215,7 @@ nohup python -u experiments/context_reweighting_experiment.py --preset paper-fig
 ```
 
 ```bash
-nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --compute-mu-diagnostics --diagnostic-cv-folds 5 --parallel-backend processes --n-jobs 16 --batch-size 8 --verbose 0 --output results/paper_figure5_mu_diagnostics.csv --run-log-path results/paper_figure5_mu_diagnostics.log > results/paper_figure5_mu_diagnostics.log 2>&1 &
+nohup python -u experiments/context_reweighting_experiment.py --preset paper-figure5 --skip-spo --compute-mu-diagnostics --diagnostic-cv-folds 5 --parallel-backend processes --n-jobs 8 --batch-size 8 --verbose 0 --output results/paper_figure5_mu_diagnostics.csv --run-log-path results/paper_figure5_mu_diagnostics.log > results/paper_figure5_mu_diagnostics.log 2>&1 &
 ```
 
 Every invocation appends a row to `results/run_history.md` with:
@@ -228,6 +228,16 @@ Every invocation appends a row to `results/run_history.md` with:
 
 For normal usage, the command is rebuilt automatically from `sys.argv`, so the
 examples do not need `--launch-command`.
+
+One operational note from cluster runs: when the diagnostics sweep was launched
+with a much larger process pool, `joblib` occasionally raised
+`TerminatedWorkerError` with worker exit code `SIGKILL(-9)`. The most likely
+cause is OS-level memory pressure in the worker pool, not a Python garbage
+collection issue. In practice the right first response is:
+
+- rerun with the same output CSV so the job resumes,
+- lower `--n-jobs` to `8` or `12`, and
+- only increase the process count again after increasing memory per worker.
 
 For a small non-linear weight regressor with explicit tuning:
 
