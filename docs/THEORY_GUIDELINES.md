@@ -1,6 +1,6 @@
 # Projected-regret theory guidelines
 
-Last updated: 2026-08-14 12:27 PDT
+Last updated: 2026-08-14 12:41 PDT
 
 Notation authority: `docs/orthogonal_projected_regret_reweighting.tex`.
 
@@ -50,8 +50,10 @@ If `h in H_t` approximates the ordinary residual, then
 ```
 
 belongs to `H_t + q_t^0 H_t` and approximates the weighted functional
-gradient. Adding `H_t` alone does not expand a linear class because
-`H_t + H_t = H_t`. Multiplication by `q_t^0` usually creates new functions.
+gradient. A second copy of `H_t` can enlarge a norm-bounded class by increasing
+its coefficient radius. It does not add new directions because
+`span(H_t + H_t) = span(H_t)`. Multiplication by `q_t^0` usually adds
+functions outside this span.
 
 This is the primary algorithmic justification for the product block. It is
 more precise than saying that projected regret identifies useful
